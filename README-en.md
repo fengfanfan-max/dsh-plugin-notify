@@ -20,6 +20,36 @@ execution waits for user confirmation, plus a settings section to manage channel
 | WeCom group bot | Host | Text message, optional custom message template. |
 | Generic webhook | Host | Custom URL + headers + JSON/text template. Placeholders: `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`. Works with Slack / Discord / ntfy / Bark / ServerChan / PushPlus, etc. |
 
+## Notification body and title
+
+By default a turn-end notification carries an auto-generated body (`「session title」回合 #N 已完成`), which says very little.
+
+The model can write its own one-line summary through the **`notify_summary`** tool. The tool only *records* the text; the notification is still sent by the existing turn/end path, so a summary can never arrive before the turn it describes:
+
+```
+notify_summary({ summary: "Security fence fixed, PR #3 awaiting review" })
+```
+
+- The summary replaces the body; the `回合 #N` marker is gone.
+- **Not calling it changes nothing**, so not every turn needs one.
+- A summary longer than 200 characters is **cut rather than rejected**, and the tool result tells the model it was cut.
+- Error turns still append the mechanical error detail below the summary — that is objective information, not an editorial choice.
+
+Titles are configurable per notification kind, with `{{session}}`, `{{kind}}` (已完成 / 目标阻塞 / 已中止 / 出错) and `{{turn}}` placeholders:
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    messages:
+      turnEnd:  "{{session}} · DSH"      # default "DSH · 任务结束"
+      approval: "DSH · needs a click"    # default "DSH · 等待确认"
+      question: "DSH · needs an answer"  # default "DSH · 等待回答"
+```
+
+A blank or non-string value falls back to the default, so a notification never ends up without a title; an unrecognised placeholder is **left literal**, so a typo shows up in the notification instead of disappearing.
+
+The model can also override the title per turn by passing `title` to `notify_summary({ summary, title })`, with the configured value as the fallback.
+
 ## Message format
 
 All webhook channels share the same placeholders:

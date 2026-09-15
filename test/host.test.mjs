@@ -29,6 +29,16 @@ import {
   handleSessionEvent,
   systemNotify,
   playSystemSound,
+  cleanSummary,
+  cleanTitle,
+  interpolate,
+  resolveTitle,
+  DEFAULT_TITLES,
+  EMPTY_NOTICE,
+  createSummaryStore,
+  registerNotifyTool,
+  NOTIFY_TOOL_NAME,
+  SUMMARY_LIMIT,
   apply,
 } from "../lib/index.js";
 
@@ -485,4 +495,142 @@ test("session/event listener is registered", () => {
 test("TURN_END_KINDS and defaults are frozen constants", () => {
   assert.deepEqual(TURN_END_KINDS, ["completed", "blocked", "aborted", "error"]);
   assert.equal(DEFAULT_CONFIG.triggers.turnEnd, true);
+});
+
+// ── notify_summary ─────────────────────────────────────────────────────────
+
+test("cleanSummary and cleanTitle collapse whitespace and cap the result", () => {
+  assert.equal(cleanSummary("  修好了\n\n安全栅栏  "), "修好了 安全栅栏");
+  assert.equal(cleanSummary(42), "");
+  assert.equal(cleanSummary(undefined), "");
+  const long = "长".repeat(SUMMARY_LIMIT + 20);
+  assert.equal(cleanTitle(long).length, 121, "capped plus the ellipsis");
+  assert.ok(cleanTitle(long).endsWith("…"));
+  assert.equal(cleanTitle("  简短  "), "简短");
+});
+
+test("interpolate substitutes known names and leaves unknown ones literal", () => {
+  assert.equal(interpolate("{{session}} · DSH", { session: "通知功能" }), "通知功能 · DSH");
+  assert.equal(interpolate("{{ session }}", { session: "x" }), "x");
+  assert.equal(interpolate("{{nope}}", { session: "x" }), "{{nope}}");
+});
+
+test("resolveTitle prefers the override, then the template, then the default", () => {
+  const vars = { session: "通知功能", kind: "已完成", turn: "29" };
+  assert.equal(resolveTitle("", "{{session}} · DSH", vars, DEFAULT_TITLES.turnEnd), "通知功能 · DSH");
+  assert.equal(resolveTitle("构建失败", "{{session}} · DSH", vars, DEFAULT_TITLES.turnEnd), "构建失败");
+  assert.equal(resolveTitle("", "{{session}} #{{turn}}", vars, DEFAULT_TITLES.turnEnd), "通知功能 #29");
+  assert.equal(resolveTitle("", "  ", vars, DEFAULT_TITLES.turnEnd), DEFAULT_TITLES.turnEnd);
+  assert.equal(resolveTitle(undefined, undefined, vars, DEFAULT_TITLES.turnEnd), DEFAULT_TITLES.turnEnd);
+});
+
+test("createSummaryStore hands each notice over exactly once, per session", () => {
+  const store = createSummaryStore();
+  store.set("s1", { summary: "第一条", title: "标题" });
+  store.set("s2", { summary: "别的会话" });
+  assert.deepEqual(store.take("s1"), { summary: "第一条", title: "标题" });
+  assert.equal(store.take("s1"), EMPTY_NOTICE, "consumed, never replayed");
+  assert.deepEqual(store.take("s2"), { summary: "别的会话", title: "" });
+  assert.equal(store.take("unknown"), EMPTY_NOTICE);
+  store.set("", { summary: "无会话" });
+  assert.equal(store.take(""), EMPTY_NOTICE);
+  store.set("s3", { summary: "   " });
+  assert.equal(store.take("s3"), EMPTY_NOTICE, "blank writes are not stored");
+});
+
+test("a summary replaces the generic body and the title comes from config", () => {
+  const session = { id: "s1", events: [{ type: "session/title", data: { title: "通知功能" } }] };
+  const event = { type: "turn/end", data: { turn: 29, reason: { kind: "completed" } } };
+
+  const generic = buildTurnEndMessage(session, event);
+  assert.match(generic.body, /回合 #29/);
+  assert.equal(generic.title, DEFAULT_TITLES.turnEnd);
+
+  const templated = buildTurnEndMessage(session, event, { summary: "安全栅栏已修好" }, "{{session}} · {{kind}} #{{turn}}");
+  assert.equal(templated.body, "安全栅栏已修好");
+  assert.equal(templated.title, "通知功能 · 已完成 #29");
+
+  const overridden = buildTurnEndMessage(session, event, { summary: "构建挂了", title: "构建失败" }, "{{session}} · DSH");
+  assert.equal(overridden.title, "构建失败");
+  assert.equal(overridden.body, "构建挂了");
+});
+
+test("an error turn keeps the mechanical detail under the summary", () => {
+  const session = { id: "s1", events: [{ type: "session/title", data: { title: "T" } }] };
+  const event = { type: "turn/end", data: { turn: 3, reason: { kind: "error", error: { message: "boom" } } } };
+  assert.equal(buildTurnEndMessage(session, event, { summary: "构建失败" }).body, "构建失败\nboom");
+});
+
+test("approval and question titles are configurable too", () => {
+  const session = { id: "s1", events: [{ type: "session/title", data: { title: "通知功能" } }] };
+  const approval = buildApprovalMessage(session, { data: { toolName: "bash" } }, "{{session}} · 点一下");
+  assert.equal(approval.title, "通知功能 · 点一下");
+  const question = buildQuestionMessage(session, { data: { turn: 5 } }, "{{session}} · 等你 #{{turn}}");
+  assert.equal(question.title, "通知功能 · 等你 #5");
+});
+
+test("handleSessionEvent consumes a notice only for a turn it actually notifies", async () => {
+  const cfg = normalizeConfig({ triggers: { turnEndKinds: ["completed"] }, system: { enabled: true, sound: false } });
+  const session = { id: "s1", events: [] };
+  const sent = [];
+  const impls = { system: (_systemCfg, message) => { sent.push(message); return Promise.resolve(); } };
+  let takes = 0;
+  const takeNotice = () => { takes += 1; return { summary: "摘要", title: "标题" }; };
+
+  // A filtered-out turn kind must not burn the notice.
+  handleSessionEvent(cfg, session, { type: "turn/end", data: { turn: 1, reason: { kind: "aborted" } } }, impls, null, takeNotice);
+  assert.equal(takes, 0);
+  assert.equal(sent.length, 0);
+
+  handleSessionEvent(cfg, session, { type: "turn/end", data: { turn: 2, reason: { kind: "completed" } } }, impls, null, takeNotice);
+  assert.equal(takes, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].body, "摘要");
+  assert.equal(sent[0].title, "标题");
+});
+
+test("normalizeConfig accepts title templates and rejects blank ones", () => {
+  const configured = normalizeConfig({ messages: { turnEnd: "{{session}} · DSH", approval: "   ", question: 7 } });
+  assert.equal(configured.messages.turnEnd, "{{session}} · DSH");
+  assert.equal(configured.messages.approval, DEFAULT_TITLES.approval, "blank falls back");
+  assert.equal(configured.messages.question, DEFAULT_TITLES.question, "non-string falls back");
+  assert.deepEqual(normalizeConfig({}).messages, DEFAULT_TITLES);
+});
+
+test("registerNotifyTool records a cleaned, length-capped notice", async () => {
+  const registered = [];
+  const tools = { register: (definition) => { registered.push(definition); return "disposer"; } };
+  const ctx = { get: (service) => (service === "tools" ? tools : undefined) };
+  const store = createSummaryStore();
+  const defined = [];
+
+  const dispose = registerNotifyTool(ctx, store, { defineTool: (options) => { defined.push(options); return options; } });
+  assert.equal(dispose, "disposer");
+  assert.equal(defined[0].name, NOTIFY_TOOL_NAME);
+
+  const tool = registered[0];
+  const session = { id: "s1" };
+  assert.deepEqual(
+    await tool.execute({ summary: "  修好了\n\n栅栏  ", title: "  安全栅栏  " }, { agent: { session } }),
+    { summary: "修好了 栅栏", title: "安全栅栏", truncated: false },
+  );
+  assert.deepEqual(store.take("s1"), { summary: "修好了 栅栏", title: "安全栅栏" });
+
+  const capped = await tool.execute({ summary: "x".repeat(SUMMARY_LIMIT + 50) }, { agent: { session } });
+  assert.equal(capped.truncated, true);
+  assert.equal(capped.summary.length, SUMMARY_LIMIT);
+  assert.equal(capped.title, "", "no title means the configured default is used");
+
+  // A synchronous throw, matching how todo_write rejects a non-agent caller.
+  assert.throws(() => tool.execute({ summary: "x" }, {}), /owning agent session/);
+});
+
+test("registerNotifyTool is skipped when the deployment cannot support it", () => {
+  const store = createSummaryStore();
+  const define = (options) => options;
+  assert.equal(registerNotifyTool({ get: () => undefined }, store, { defineTool: define }), undefined);
+  assert.equal(registerNotifyTool({ get: () => ({}) }, store, { defineTool: define }), undefined);
+  assert.equal(registerNotifyTool({ get: () => ({ register() {} }) }, store, { defineTool: null }), undefined);
+  assert.equal(registerNotifyTool({ get: () => ({ register() {} }) }, store, { defineTool: undefined }), undefined);
 });

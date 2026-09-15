@@ -18,6 +18,36 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 | 企业微信群机器人 | 宿主机 | 文本消息，可选自定义消息模板 |
 | 通用 Webhook | 宿主机 | 自定义 URL + headers + JSON/文本模板，占位符 `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`，可对接 Slack / Discord / ntfy / Bark / Server酱 / PushPlus 等 |
 
+## 通知内容与标题
+
+默认情况下，轮次结束的通知正文是自动生成的（`「会话标题」回合 #N 已完成`），信息量有限。
+
+模型可以通过 **`notify_summary`** 工具写一句自己挑的摘要。它只**记录**文本，通知仍由轮次结束那条既有路径发出——所以摘要永远不会早于它所描述的那一轮到达：
+
+```
+notify_summary({ summary: "安全栅栏已修好，PR #3 待合并" })
+```
+
+- 正文换成摘要，不再有「回合 #N」。
+- **没调用就维持原样**，所以不必每轮都写。
+- 摘要超过 200 字符会被**截断而非拒绝**，工具返回值里会告诉模型它被截断了。
+- 出错轮次仍会在摘要下方附上机械的错误详情（那是客观信息，不是编辑选择）。
+
+标题也可以定制，三处通知各有配置，支持 `{{session}}`（会话标题）、`{{kind}}`（已完成 / 目标阻塞 / 已中止 / 出错）、`{{turn}}`（轮次号）占位符：
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    messages:
+      turnEnd:  "{{session}} · DSH"    # 默认 "DSH · 任务结束"
+      approval: "DSH · 等你点一下"      # 默认 "DSH · 等待确认"
+      question: "DSH · 等你回答"        # 默认 "DSH · 等待回答"
+```
+
+留空或非字符串会回落到默认值，不会产生没有标题的通知；未识别的占位符**原样保留**，所以写错了会直接出现在通知里，而不是悄悄消失。
+
+模型还能按轮覆盖标题——`notify_summary({ summary, title })` 里传 `title` 即可，配置值作为兜底。
+
 ## 消息格式
 
 所有 Webhook 渠道共用同一套占位符：`{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`。
