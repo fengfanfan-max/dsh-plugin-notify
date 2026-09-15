@@ -125,6 +125,26 @@ corepack pnpm remove dsh-plugin-notify   # 或 dsh plugin --profile web remove d
 
 飞书/钉钉签名密钥按 schema 声明为 `role('secret')` 只写字段：设置文档与所有 wire 面都看不到明文，只暴露「是否已配置」标记；接口读回空串并用 `secretSet` 标记，写入时空串表示保持不变，`clearSecrets` 列出要清除的路径。Webhook 地址与通用请求头以明文保存，请勿在其中放置敏感凭据（除飞书/钉钉签名密钥外）。
 
+### 接口访问控制
+
+三条 `/dsh-plugin-notify/*` 路由都带一道**信任栅栏**，守护的是浏览器对本地 HTTP API 打开的两条「混淆代理」路径：
+
+- **DNS rebinding** —— `Host` 指向攻击者域名，而连接实际落到本机；
+- **跨站请求** —— 恶意页面直接向本地 API 发起的写入。
+
+这条 API 是**写入面**（`system.notifier.command` 会被执行），所以两条路径都必须堵死。栅栏同时约束浏览器与非浏览器客户端：纯 HTTP 下浏览器可能既不发送 `Origin` 也不发送 Fetch 元数据，因此 `Host` 是唯一始终可靠的依据。
+
+默认只信任回环地址（`localhost` / `::1` / `127.x.x.x`）。通过局域网、隧道或反向代理对外提供访问时，把对外的 authority（精确的 `host:port`）加进 `security.trustedHosts`：
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    security:
+      trustedHosts: ["dsh.example:3443"]
+```
+
+不配时行为等同只信任回环。DSH 自身对 `/api` 桥有同一套设计（`dsh-client-connection` 的 `isTrustedApiRequest`），但**通过 `webServer.register` 注册的插件路由不会继承它**，所以插件需要自带。
+
 ## 开发
 
 ```sh

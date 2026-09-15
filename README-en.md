@@ -159,6 +159,33 @@ string on write means "keep unchanged", and `clearSecrets` lists paths to clear.
 generic request headers are stored in plain text, so do not put sensitive credentials there
 (other than the Feishu/DingTalk signature secrets).
 
+### API access control
+
+All three `/dsh-plugin-notify/*` routes sit behind a **trust fence** that defends the two
+confused-deputy paths a browser opens against a local HTTP API:
+
+- **DNS rebinding** — `Host` names the attacker's domain while the socket lands on this server.
+- **Cross-site requests** — a malicious page writing to the local API directly.
+
+This API is a *write* surface (`system.notifier.command` is executed), so neither path is
+acceptable. The fence binds browser and non-browser clients alike: over plain HTTP a browser may
+send neither `Origin` nor Fetch metadata, so `Host` is the only always-reliable signal.
+
+Loopback (`localhost` / `::1` / `127.x.x.x`) is trusted by default. When the deployment is served
+over a LAN, a tunnel or a reverse proxy, add its authority (exact `host:port`) to
+`security.trustedHosts`:
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    security:
+      trustedHosts: ["dsh.example:3443"]
+```
+
+Unset, the behaviour is loopback-only. DSH applies the same design to its `/api` bridge
+(`isTrustedApiRequest` in `dsh-client-connection`), but routes registered through
+`webServer.register` do **not** inherit it, so the plugin carries its own.
+
 ## Development
 
 ```sh

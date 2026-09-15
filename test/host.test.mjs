@@ -32,6 +32,8 @@ import {
   renderNotifierArg,
   renderNotifierArgs,
   NOTIFIER_DEFAULT_ARGS,
+  isTrustedRequest,
+  isLoopbackHostname,
   apply,
 } from "../lib/index.js";
 
@@ -101,6 +103,73 @@ test("normalizeConfig keeps a configured notifier and repairs a malformed one", 
 
   const filtered = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["ok", 7, null] } } });
   assert.deepEqual(filtered.system.notifier.args, ["ok"]);
+});
+
+test("an explicitly empty args list survives normalization", () => {
+  const cfg = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: [] } } });
+  assert.deepEqual(cfg.system.notifier, { command: "/tmp/n", args: [] });
+});
+
+// ── request trust fence ────────────────────────────────────────────────────
+
+test("isLoopbackHostname accepts loopback forms and rejects public names", () => {
+  for (const name of ["localhost", "[::1]", "127.0.0.1", "127.1.2.3"]) {
+    assert.equal(isLoopbackHostname(name), true, name);
+  }
+  for (const name of ["evil.example", "128.0.0.1", "127.0.0.256", "notlocalhost", "10.0.0.1"]) {
+    assert.equal(isLoopbackHostname(name), false, name);
+  }
+});
+
+test("isTrustedRequest accepts loopback and a configured trusted host", () => {
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080" }), true);
+  assert.equal(isTrustedRequest({ host: "localhost:3080" }), true);
+  assert.equal(isTrustedRequest({ host: "[::1]:3080" }), true);
+  // The Host fence binds non-browser clients even though they send no Origin.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080" }, []), true);
+
+  assert.equal(isTrustedRequest({ host: "dsh.example:3443" }), false);
+  assert.equal(isTrustedRequest({ host: "dsh.example:3443" }, ["dsh.example:3443"]), true);
+  // An entry grants exactly one authority, not the whole hostname.
+  assert.equal(isTrustedRequest({ host: "dsh.example:9999" }, ["dsh.example:3443"]), false);
+});
+
+test("isTrustedRequest rejects the two browser confused-deputy paths", () => {
+  // Cross-site write from a malicious page.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "https://evil.example" }), false);
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", "sec-fetch-site": "cross-site" }), false);
+  // DNS rebinding: the socket lands here but Host names the attacker's domain.
+  assert.equal(isTrustedRequest({ host: "evil.example:3080", origin: "http://evil.example:3080" }), false);
+  // Malformed and missing values fail closed.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "not a url" }), false);
+  assert.equal(isTrustedRequest({}), false);
+  assert.equal(isTrustedRequest({ host: "" }), false);
+  // A same-origin browser request is allowed, with or without Fetch metadata.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "http://127.0.0.1:3080" }), true);
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "http://127.0.0.1:3080", "sec-fetch-site": "same-origin" }), true);
+});
+
+test("normalizeConfig drops malformed trustedHosts entries", () => {
+  const cfg = normalizeConfig({ security: { trustedHosts: ["dsh.example:3443", "dsh.example:3443", "  ", 7, "https://evil.example/", "uid:pw@x:1"] } });
+  assert.deepEqual(cfg.security.trustedHosts, ["dsh.example:3443"]);
+});
+
+test("the config route refuses a cross-site write and applies nothing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-plugin-notify-"));
+  const ctx = stubCtx(directory);
+  apply(ctx, { directory });
+  const route = ctx.routes.get("/dsh-plugin-notify/config");
+
+  const rejected = await call(route, "POST",
+    { config: { triggers: { turnEnd: false } } },
+    { host: "127.0.0.1:3080", origin: "https://evil.example", "sec-fetch-site": "cross-site" });
+  assert.equal(rejected.status, 403);
+  assert.equal(rejected.body.ok, false);
+
+  // The write did not land.
+  const after = await call(route, "GET");
+  assert.equal(after.status, 200);
+  assert.equal(after.body.config.triggers.turnEnd, true);
 });
 
 test("systemNotify builds a PowerShell WinRT toast on win32 with escaped text", async () => {
@@ -450,9 +519,12 @@ function stubCtx(directory) {
   return ctx;
 }
 
-async function call(handler, method, bodyObject) {
+async function call(handler, method, bodyObject, headers) {
   const req = {
     method,
+    // Every request carries a Host; the trust fence requires a loopback one
+    // unless a test overrides it.
+    headers: { host: "127.0.0.1:3080", ...(headers ?? {}) },
     [Symbol.asyncIterator]: async function* () {
       if (bodyObject !== undefined) yield Buffer.from(JSON.stringify(bodyObject));
     },
