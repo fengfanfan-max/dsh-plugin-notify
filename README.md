@@ -171,6 +171,16 @@ corepack pnpm remove dsh-plugin-notify   # 或 dsh plugin --profile web remove d
 
 不配时行为等同只信任回环。DSH 自身对 `/api` 桥有同一套设计（`dsh-client-connection` 的 `isTrustedApiRequest`），但**通过 `webServer.register` 注册的插件路由不会继承它**，所以插件需要自带。
 
+**转发时重写 Host / Origin 的网关不需要任何配置。** 例如 `dsh-mobile` 在 LAN 侧完成认证后，会以**上游身份**转发请求：
+
+```js
+headers.host = upstream.host;                                // 127.0.0.1:3080
+headers.origin = upstream.origin;                            // http://127.0.0.1:3080
+headers["sec-fetch-site"] = "same-origin";
+```
+
+于是插件收到的是一个干净的环回同源请求，栅栏直接放行。只有**原样透传外部 Host** 的反向代理（nginx / Caddy 的默认行为，或裸隧道）才需要把对外 authority 加进 `security.trustedHosts`。
+
 ## 开发
 
 ```sh

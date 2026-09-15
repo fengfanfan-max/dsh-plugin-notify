@@ -223,6 +223,19 @@ Unset, the behaviour is loopback-only. DSH applies the same design to its `/api`
 (`isTrustedApiRequest` in `dsh-client-connection`), but routes registered through
 `webServer.register` do **not** inherit it, so the plugin carries its own.
 
+**A gateway that rewrites Host / Origin needs no configuration at all.** `dsh-mobile`, for
+example, authenticates the caller on the LAN side and then forwards as the upstream:
+
+```js
+headers.host = upstream.host;                                // 127.0.0.1:3080
+headers.origin = upstream.origin;                            // http://127.0.0.1:3080
+headers["sec-fetch-site"] = "same-origin";
+```
+
+The plugin therefore receives a clean loopback same-origin request and the fence allows it. Only
+a reverse proxy that **passes the external Host through unchanged** (nginx and Caddy do by
+default, as does a bare tunnel) needs its authority listed in `security.trustedHosts`.
+
 ## Development
 
 ```sh
