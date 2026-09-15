@@ -37,11 +37,17 @@ tokens are left intact).
 match whichever tool you point at:
 
 ```yaml
-# terminal-notifier (brew install terminal-notifier)
-notifier:
-  command: /opt/homebrew/bin/terminal-notifier
-  args: ["-title", "{{title}}", "-message", "{{body}}"]
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: dsh-plugin-notify
+  config:
+    system:
+      # terminal-notifier (brew install terminal-notifier)
+      notifier:
+        command: /opt/homebrew/bin/terminal-notifier
+        args: ["-title", "{{title}}", "-message", "{{body}}"]
 ```
+
+The next two replace the same `notifier:` block:
 
 ```yaml
 # alerter (without --timeout it waits forever)

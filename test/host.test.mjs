@@ -130,11 +130,10 @@ test("isLoopbackHostname accepts loopback forms and rejects public names", () =>
 });
 
 test("isTrustedRequest accepts loopback and a configured trusted host", () => {
+  // The Host fence binds non-browser clients even though they send no Origin.
   assert.equal(isTrustedRequest({ host: "127.0.0.1:3080" }), true);
   assert.equal(isTrustedRequest({ host: "localhost:3080" }), true);
   assert.equal(isTrustedRequest({ host: "[::1]:3080" }), true);
-  // The Host fence binds non-browser clients even though they send no Origin.
-  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080" }, []), true);
 
   assert.equal(isTrustedRequest({ host: "dsh.example:3443" }), false);
   assert.equal(isTrustedRequest({ host: "dsh.example:3443" }, ["dsh.example:3443"]), true);

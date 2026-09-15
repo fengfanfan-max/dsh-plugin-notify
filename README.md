@@ -27,11 +27,17 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 **插件不对通知器做任何假设，也没有默认参数模板**——`command` 指向什么就执行什么，`args` 就是它的完整 argv。参数是工具专属的，所以必须照你所选工具的用法写：
 
 ```yaml
-# terminal-notifier（brew install terminal-notifier）
-notifier:
-  command: /opt/homebrew/bin/terminal-notifier
-  args: ["-title", "{{title}}", "-message", "{{body}}"]
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: dsh-plugin-notify
+  config:
+    system:
+      # terminal-notifier（brew install terminal-notifier）
+      notifier:
+        command: /opt/homebrew/bin/terminal-notifier
+        args: ["-title", "{{title}}", "-message", "{{body}}"]
 ```
+
+下面两个是同一个 `notifier:` 块的替换内容：
 
 ```yaml
 # alerter（无参数则永久等待，记得给 --timeout）
