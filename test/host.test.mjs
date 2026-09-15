@@ -634,3 +634,22 @@ test("registerNotifyTool is skipped when the deployment cannot support it", () =
   assert.equal(registerNotifyTool({ get: () => ({ register() {} }) }, store, { defineTool: null }), undefined);
   assert.equal(registerNotifyTool({ get: () => ({ register() {} }) }, store, { defineTool: undefined }), undefined);
 });
+
+test("the tool definition survives the harness schema compiler", async () => {
+  // The injected fake `defineTool` used elsewhere in this file validates nothing,
+  // which is precisely how a `required: false` parameter shipped and then failed
+  // the entire plugin load with UNSUPPORTED_SCHEMA at `dsh web` boot. Run the real
+  // compiler here so a malformed spec fails in tests instead of in the field.
+  const { defineTool: realDefineTool } = await import("@deepseek-ai/dsh-tools");
+  assert.equal(typeof realDefineTool, "function", "@deepseek-ai/dsh-tools must be a dependency");
+
+  const registered = [];
+  const tools = { register: (definition) => { registered.push(definition); return () => {}; } };
+  const ctx = { get: (service) => (service === "tools" ? tools : undefined) };
+  registerNotifyTool(ctx, createSummaryStore(), { defineTool: realDefineTool });
+
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].name, NOTIFY_TOOL_NAME);
+  // `summary` is the only required parameter; `title` must round-trip as optional.
+  assert.deepEqual(registered[0].parameters?.required ?? registered[0].input?.required, ["summary"]);
+});
