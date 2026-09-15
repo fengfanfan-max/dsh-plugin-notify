@@ -22,21 +22,41 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 
 宿主机通道默认调用操作系统自带的通知命令。但在某些环境里这会**静默失效**——最典型的是 macOS：`osascript display notification` 的通知身份取自启动链上的宿主 App，如果那个 App 从未申请过通知权限，系统会把通知丢掉，而 `osascript` 仍然以 `0` 退出，所以插件无从察觉。
 
-`system.notifier` 是逃生舱：填了 `command` 就改用它，`args` 里可用 `{{title}}` / `{{body}}` 占位符（与 Webhook 模板同一套写法）。
+`system.notifier` 是逃生舱：填了 `command` 就改用它，`args` 里可用 `{{title}}` / `{{body}}` 占位符（与 Webhook 模板同一套写法；未识别的 token 原样保留）。
+
+**插件不对通知器做任何假设，也没有默认参数模板**——`command` 指向什么就执行什么，`args` 就是它的完整 argv。参数是工具专属的，所以必须照你所选工具的用法写：
 
 ```yaml
-- id: dsh-plugin-notify
-  config:
-    system:
-      enabled: true
-      notifier:
-        command: /opt/homebrew/bin/terminal-notifier
-        args: ["-title", "{{title}}", "-message", "{{body}}"]
+# terminal-notifier（brew install terminal-notifier）
+notifier:
+  command: /opt/homebrew/bin/terminal-notifier
+  args: ["-title", "{{title}}", "-message", "{{body}}"]
 ```
 
-`command` 留空即维持原有的系统默认行为（也是默认值），因此不配置时行为完全不变。
+```yaml
+# alerter（无参数则永久等待，记得给 --timeout）
+notifier:
+  command: /Users/you/.local/bin/alerter
+  args: ["--title", "{{title}}", "--message", "{{body}}", "--timeout", "30"]
+```
 
-相比系统默认命令，**正经的通知器带有真实退出码**（例如 terminal-notifier 用 `3` 表示未授权），发送失败会真正冒泡到插件日志里的告警，而不是静默报成功。
+```yaml
+# 自编译的 app bundle（UNUserNotificationCenter + 自己的 bundle id 与图标）
+notifier:
+  command: /Users/you/Applications/DSH Notifier.app/Contents/MacOS/notifier
+  args: ["-title", "{{title}}", "-message", "{{body}}"]
+```
+
+⚠️ `command` **必须是绝对路径**：插件用 `execFile` 直接执行，不经过 shell，所以 `~` 不会被展开（写 `~/.local/bin/alerter` 只会得到 `ENOENT`）。`$HOME` 之类的环境变量同理。
+
+选型上的两点提醒：
+
+- **`terminal-notifier` 3.0.0 起移除了 `-sender`**，因为它改用了 `UserNotifications`，而该框架读取真实签名身份、不允许覆盖。所以它会以自己的名义出现在「系统设置 → 通知」里，首次使用需要授权一次。
+- **`alerter` 仍走旧的 `NSUserNotification`，因此仍支持 `--sender` 冒充一个已授权的 bundle id**。在宿主终端从未申请过通知权限、又不想新增授权的环境里，这是能立刻出通知的办法；代价是通知显示的是被冒充 App 的名字与图标。不介意多授权一次的话，自编译 app bundle 是更干净的选择。
+
+`command` 留空即维持原有的系统默认行为（也是默认值），因此不配置时行为完全不变；`args: []` 表示"不带参数执行"，是合法配置。
+
+相比系统默认命令，**正经的通知器带有真实退出码**（terminal-notifier 用 `3` 表示未授权、`4` 表示拿不到通知服务），发送失败会真正冒泡到插件日志里的告警，而不是静默报成功。
 
 ## 消息格式
 

@@ -31,7 +31,6 @@ import {
   playSystemSound,
   renderNotifierArg,
   renderNotifierArgs,
-  NOTIFIER_DEFAULT_ARGS,
   isTrustedRequest,
   isLoopbackHostname,
   apply,
@@ -89,23 +88,32 @@ test("renderNotifierArgs tolerates a non-array", () => {
   assert.deepEqual(renderNotifierArgs(null, "T", "B"), []);
 });
 
-test("normalizeConfig defaults system.notifier to the OS default", () => {
-  assert.deepEqual(normalizeConfig({}).system.notifier, { command: "", args: [...NOTIFIER_DEFAULT_ARGS] });
+test("normalizeConfig defaults system.notifier to the OS default, with no args", () => {
+  assert.deepEqual(normalizeConfig({}).system.notifier, { command: "", args: [] });
 });
 
-test("normalizeConfig keeps a configured notifier and repairs a malformed one", () => {
+test("normalizeConfig keeps a configured notifier and drops malformed pieces", () => {
   const kept = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["-m", "{{body}}"] } } });
   assert.deepEqual(kept.system.notifier, { command: "/tmp/n", args: ["-m", "{{body}}"] });
 
   const repaired = normalizeConfig({ system: { notifier: { command: 42, args: "nope" } } });
-  assert.equal(repaired.system.notifier.command, "");
-  assert.deepEqual(repaired.system.notifier.args, [...NOTIFIER_DEFAULT_ARGS]);
+  assert.deepEqual(repaired.system.notifier, { command: "", args: [] });
 
   const filtered = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["ok", 7, null] } } });
   assert.deepEqual(filtered.system.notifier.args, ["ok"]);
 });
 
-test("an explicitly empty args list survives normalization", () => {
+test("no default argument template is ever substituted", async () => {
+  // A tool-specific template would be wrong for every other tool, so a notifier
+  // configured without args runs with no args instead of inheriting one.
+  const fromEmpty = [];
+  await systemNotify("标题", "正文", async (file, args) => { fromEmpty.push({ file, args }); }, () => "darwin", {
+    command: "/tmp/wrapper",
+    args: [],
+  });
+  assert.deepEqual(fromEmpty[0], { file: "/tmp/wrapper", args: [] });
+
+  // The same config round-trips through normalization with args intact.
   const cfg = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: [] } } });
   assert.deepEqual(cfg.system.notifier, { command: "/tmp/n", args: [] });
 });

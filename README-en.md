@@ -29,24 +29,55 @@ never asked for notification permission, macOS drops the notification while `osa
 exits `0`, so the plugin has no way to notice.
 
 `system.notifier` is the escape hatch: set `command` and it is used instead, with `{{title}}` /
-`{{body}}` interpolated into `args` (the same template shape the webhook channels use).
+`{{body}}` interpolated into `args` (the same template shape the webhook channels use; unknown
+tokens are left intact).
+
+**The plugin makes no assumption about the notifier and ships no default argument template** —
+`command` is run as given and `args` is its whole argv. Flags are tool-specific, so they must
+match whichever tool you point at:
 
 ```yaml
-- id: dsh-plugin-notify
-  config:
-    system:
-      enabled: true
-      notifier:
-        command: /opt/homebrew/bin/terminal-notifier
-        args: ["-title", "{{title}}", "-message", "{{body}}"]
+# terminal-notifier (brew install terminal-notifier)
+notifier:
+  command: /opt/homebrew/bin/terminal-notifier
+  args: ["-title", "{{title}}", "-message", "{{body}}"]
 ```
 
+```yaml
+# alerter (without --timeout it waits forever)
+notifier:
+  command: /Users/you/.local/bin/alerter
+  args: ["--title", "{{title}}", "--message", "{{body}}", "--timeout", "30"]
+```
+
+```yaml
+# a self-compiled app bundle (UNUserNotificationCenter, own bundle id and icon)
+notifier:
+  command: /Users/you/Applications/DSH Notifier.app/Contents/MacOS/notifier
+  args: ["-title", "{{title}}", "-message", "{{body}}"]
+```
+
+⚠️ `command` **must be an absolute path**: the plugin runs it through `execFile`, with no shell
+in between, so `~` is not expanded (`~/.local/bin/alerter` just yields `ENOENT`). The same goes
+for environment variables such as `$HOME`.
+
+Two things worth knowing when choosing:
+
+- **terminal-notifier removed `-sender` in 3.0.0**, because it moved to `UserNotifications`,
+  which reads the real signed identity and allows no override. It therefore appears under its
+  own name in System Settings → Notifications and needs one authorisation.
+- **alerter still uses the older `NSUserNotification`, so `--sender` still works** to impersonate
+  an already-authorised bundle id. Where the host terminal never asked for notification
+  permission and you would rather not grant a new one, that is the way to get notifications
+  immediately; the cost is that they appear under the impersonated app's name and icon. A
+  self-compiled app bundle is the cleaner option if one authorisation is acceptable.
+
 An empty `command` keeps the OS default (and is the default value), so behaviour is unchanged
-unless you opt in.
+unless you opt in; `args: []` means "run it with no arguments" and is a valid configuration.
 
 Unlike the OS default commands, **a real notifier reports real exit codes** (terminal-notifier
-uses `3` for "not authorized"), so a failed delivery surfaces as a warning in the plugin log
-instead of a silent success.
+uses `3` for "not authorized" and `4` when it cannot reach the notification service), so a failed
+delivery surfaces as a warning in the plugin log instead of a silent success.
 
 ## Message format
 
