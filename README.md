@@ -12,11 +12,31 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 | 渠道 | 位置 | 说明 |
 | --- | --- | --- |
 | 浏览器通知（页面内横幅）＋ 系统原生通知（可选） | 客户端 | 两个独立设置项：「浏览器通知」在页面可见时于右上角弹出文字横幅；「系统原生通知」通过浏览器 Notification API 弹出操作系统通知，标签页在后台/最小化时也能收到（需浏览器通知权限）；完全离开页面时请配合系统通知使用 |
-| 系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send` / Windows PowerShell 原生 toast（Windows 10/11 操作中心），浏览器关闭也能收到；可选系统提示音（macOS `afplay` / Windows 系统内置提示音） |
+| 系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send` / Windows PowerShell 原生 toast（Windows 10/11 操作中心），浏览器关闭也能收到；可选系统提示音（macOS `afplay` / Windows 系统内置提示音）；可用 [`system.notifier`](#自定义通知器systemnotifier) 换成任意通知器命令 |
 | 飞书群机器人 | 宿主机 | 文本消息，可选签名密钥（timestamp + HMAC-SHA256），可选自定义消息模板 |
 | 钉钉群机器人 | 宿主机 | 文本消息，可选加签（timestamp + sign），可选自定义消息模板 |
 | 企业微信群机器人 | 宿主机 | 文本消息，可选自定义消息模板 |
 | 通用 Webhook | 宿主机 | 自定义 URL + headers + JSON/文本模板，占位符 `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`，可对接 Slack / Discord / ntfy / Bark / Server酱 / PushPlus 等 |
+
+## 自定义通知器（`system.notifier`）
+
+宿主机通道默认调用操作系统自带的通知命令。但在某些环境里这会**静默失效**——最典型的是 macOS：`osascript display notification` 的通知身份取自启动链上的宿主 App，如果那个 App 从未申请过通知权限，系统会把通知丢掉，而 `osascript` 仍然以 `0` 退出，所以插件无从察觉。
+
+`system.notifier` 是逃生舱：填了 `command` 就改用它，`args` 里可用 `{{title}}` / `{{body}}` 占位符（与 Webhook 模板同一套写法）。
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    system:
+      enabled: true
+      notifier:
+        command: /opt/homebrew/bin/terminal-notifier
+        args: ["-title", "{{title}}", "-message", "{{body}}"]
+```
+
+`command` 留空即维持原有的系统默认行为（也是默认值），因此不配置时行为完全不变。
+
+相比系统默认命令，**正经的通知器带有真实退出码**（例如 terminal-notifier 用 `3` 表示未授权），发送失败会真正冒泡到插件日志里的告警，而不是静默报成功。
 
 ## 消息格式
 
@@ -133,6 +153,7 @@ node --test
 ## 已知限制
 
 - 浏览器渠道默认是页面内文字横幅；开启「系统原生通知」后，标签页在后台或窗口最小化时也会通过浏览器 Notification API 弹出系统通知（需要浏览器通知权限，且浏览器必须保持运行）。浏览器完全关闭时请使用宿主机系统通知渠道。
+- 宿主机系统通知依赖运行 `dsh web` 的进程在操作系统里的通知身份。macOS 上这个身份取自启动链上的宿主 App（终端 / 启动器）：如果它从未申请过通知权限（例如 Ghostty 的 `app-notifications` 默认是 `never`），或者 `dsh web` 由 launchd 启动而没有 GUI 会话，`osascript` 会被系统静默丢弃且仍以 `0` 退出。遇到这种情况请用上面的 [`system.notifier`](#自定义通知器systemnotifier) 指向一个自带身份的通知器。
 - 飞书/钉钉签名密钥仅做「只写 + 读回脱敏」，保存在本地 `settings.yaml`（或回退 `config.json`）中但未加密；请勿在通用 Webhook 的地址或请求头中放置其他敏感凭据。
 
 ## License

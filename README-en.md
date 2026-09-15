@@ -14,11 +14,39 @@ execution waits for user confirmation, plus a settings section to manage channel
 | Channel | Location | Notes |
 | --- | --- | --- |
 | Browser notification (in-page banner) + optional OS notification | Client | Two independent settings. **Browser notification** shows a text banner in the top-right while the page is visible. **OS notification** uses the browser Notification API, so it also fires when the tab is in the background or the window is minimized (browser notification permission required). Keep the browser running and use the host system channel if you leave the page entirely. |
-| System notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell native toast (Windows 10/11 action center); works even when the browser is closed. Optional system sound (macOS `afplay` / Windows built-in alert sound). |
+| System notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell native toast (Windows 10/11 action center); works even when the browser is closed. Optional system sound (macOS `afplay` / Windows built-in alert sound). Can be pointed at any notifier command via [`system.notifier`](#custom-notifier-systemnotifier). |
 | Feishu group bot | Host | Text message, optional signed secret (timestamp + HMAC-SHA256), optional custom message template. |
 | DingTalk group bot | Host | Text message, optional signed secret (timestamp + sign), optional custom message template. |
 | WeCom group bot | Host | Text message, optional custom message template. |
 | Generic webhook | Host | Custom URL + headers + JSON/text template. Placeholders: `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`. Works with Slack / Discord / ntfy / Bark / ServerChan / PushPlus, etc. |
+
+## Custom notifier (`system.notifier`)
+
+The host channel calls the operating system's own notification command by default. In some
+environments that **fails silently** — most notably on macOS, where the identity behind
+`osascript display notification` is taken from the host app up the launch chain. If that app
+never asked for notification permission, macOS drops the notification while `osascript` still
+exits `0`, so the plugin has no way to notice.
+
+`system.notifier` is the escape hatch: set `command` and it is used instead, with `{{title}}` /
+`{{body}}` interpolated into `args` (the same template shape the webhook channels use).
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    system:
+      enabled: true
+      notifier:
+        command: /opt/homebrew/bin/terminal-notifier
+        args: ["-title", "{{title}}", "-message", "{{body}}"]
+```
+
+An empty `command` keeps the OS default (and is the default value), so behaviour is unchanged
+unless you opt in.
+
+Unlike the OS default commands, **a real notifier reports real exit codes** (terminal-notifier
+uses `3` for "not authorized"), so a failed delivery surfaces as a warning in the plugin log
+instead of a silent success.
 
 ## Message format
 
@@ -184,6 +212,13 @@ Endpoints:
   enabled, the browser Notification API can notify while the tab is in the background or the
   window is minimized (permission required, and the browser must stay running). Use the host
   system notification channel when the browser is fully closed.
+- Host system notifications depend on the notification identity of the process running
+  `dsh web`. On macOS that identity is inherited from the host app up the launch chain
+  (terminal / launcher): if it never asked for notification permission (Ghostty, for example,
+  defaults `app-notifications` to `never`), or `dsh web` is started by launchd with no GUI
+  session, `osascript` is dropped silently and still exits `0`. Point
+  [`system.notifier`](#custom-notifier-systemnotifier) at a notifier that carries its own
+  identity instead.
 - Feishu/DingTalk signature secrets are write-only + read-sanitized and stored unencrypted in
   the local `settings.yaml` (or the fallback `config.json`); do not put other sensitive
   credentials in generic-webhook URLs or request headers.

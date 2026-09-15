@@ -29,6 +29,9 @@ import {
   handleSessionEvent,
   systemNotify,
   playSystemSound,
+  renderNotifierArg,
+  renderNotifierArgs,
+  NOTIFIER_DEFAULT_ARGS,
   apply,
 } from "../lib/index.js";
 
@@ -40,6 +43,64 @@ test("systemNotify uses osascript on darwin and rejects on unknown platforms", a
   assert.equal(calls[0].file, "osascript");
   assert.match(calls[0].args.join(" "), /display notification/);
   await assert.rejects(() => systemNotify("t", "b", async () => {}, () => "freebsd"), /不支持系统通知/);
+});
+
+// ── system.notifier escape hatch ───────────────────────────────────────────
+
+test("systemNotify runs the configured notifier instead of the OS default", async () => {
+  const calls = [];
+  await systemNotify("标题", "正文", async (file, args) => { calls.push({ file, args }); }, () => "darwin", {
+    command: "/opt/homebrew/bin/terminal-notifier",
+    args: ["-title", "{{title}}", "-message", "{{body}}"],
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "/opt/homebrew/bin/terminal-notifier");
+  assert.deepEqual(calls[0].args, ["-title", "标题", "-message", "正文"]);
+});
+
+test("a custom notifier also works where the OS default has no branch at all", async () => {
+  const calls = [];
+  await systemNotify("t", "b", async (file, args) => { calls.push({ file, args }); }, () => "freebsd", {
+    command: "/usr/local/bin/notify-anything",
+    args: ["{{body}}"],
+  });
+  assert.deepEqual(calls[0], { file: "/usr/local/bin/notify-anything", args: ["b"] });
+});
+
+test("a blank notifier command falls back to the OS default", async () => {
+  const calls = [];
+  await systemNotify("标题", "正文", async (file, args) => { calls.push({ file, args }); }, () => "darwin", {
+    command: "",
+    args: ["{{body}}"],
+  });
+  assert.equal(calls[0].file, "osascript");
+});
+
+test("renderNotifierArg interpolates known tokens and leaves unknown ones untouched", () => {
+  assert.equal(renderNotifierArg("{{title}}", "T", "B"), "T");
+  assert.equal(renderNotifierArg("{{ body }}", "T", "B"), "B");
+  assert.equal(renderNotifierArg("前缀 {{title}} 后缀", "T", "B"), "前缀 T 后缀");
+  assert.equal(renderNotifierArg("{{unknown}}", "T", "B"), "{{unknown}}");
+});
+
+test("renderNotifierArgs tolerates a non-array", () => {
+  assert.deepEqual(renderNotifierArgs(null, "T", "B"), []);
+});
+
+test("normalizeConfig defaults system.notifier to the OS default", () => {
+  assert.deepEqual(normalizeConfig({}).system.notifier, { command: "", args: [...NOTIFIER_DEFAULT_ARGS] });
+});
+
+test("normalizeConfig keeps a configured notifier and repairs a malformed one", () => {
+  const kept = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["-m", "{{body}}"] } } });
+  assert.deepEqual(kept.system.notifier, { command: "/tmp/n", args: ["-m", "{{body}}"] });
+
+  const repaired = normalizeConfig({ system: { notifier: { command: 42, args: "nope" } } });
+  assert.equal(repaired.system.notifier.command, "");
+  assert.deepEqual(repaired.system.notifier.args, [...NOTIFIER_DEFAULT_ARGS]);
+
+  const filtered = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["ok", 7, null] } } });
+  assert.deepEqual(filtered.system.notifier.args, ["ok"]);
 });
 
 test("systemNotify builds a PowerShell WinRT toast on win32 with escaped text", async () => {
