@@ -641,7 +641,7 @@ test("the tool definition survives the harness schema compiler", async () => {
   // the entire plugin load with UNSUPPORTED_SCHEMA at `dsh web` boot. Run the real
   // compiler here so a malformed spec fails in tests instead of in the field.
   const { defineTool: realDefineTool } = await import("@deepseek-ai/dsh-tools");
-  assert.equal(typeof realDefineTool, "function", "@deepseek-ai/dsh-tools must be a dependency");
+  assert.equal(typeof realDefineTool, "function", "@deepseek-ai/dsh-tools must be installed (peer, provided by the harness; devDependency for these tests)");
 
   const registered = [];
   const tools = { register: (definition) => { registered.push(definition); return () => {}; } };
